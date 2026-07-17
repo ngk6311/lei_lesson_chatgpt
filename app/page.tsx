@@ -29,6 +29,7 @@ export default function Home() {
   const [today, setToday] = useState("");
   const [selected, setSelected] = useState<Booking | null>(null);
   const [saved, setSaved] = useState(false);
+  const [quickBooking, setQuickBooking] = useState(false);
 
   useEffect(() => {
     fetch("/api/bootstrap", { cache: "no-store" })
@@ -123,7 +124,7 @@ export default function Home() {
             <h1>{active === "今日總覽" ? "早安，ANITA 教練" : active}</h1>
             <p>今天也一起陪學員，溫柔地感受身體的改變。</p>
           </div>
-          <div className="coach-chip"><span>AN</span><div><b>ANITA</b><small>皮拉提斯教練</small></div></div>
+          <div className="top-actions"><button className="primary-button" onClick={() => setQuickBooking(true)}>＋ 快速預約下一堂</button><div className="coach-chip"><span>AN</span><div><b>ANITA</b><small>皮拉提斯教練</small></div></div></div>
         </header>
 
         {loading && <div className="system-message">正在讀取 Google 行事曆與學員資料…</div>}
@@ -198,6 +199,7 @@ export default function Home() {
       </section>
 
       {selected && <RecordModal booking={selected} saved={saved} onClose={() => setSelected(null)} onSave={saveRecord} />}
+      {quickBooking && <QuickBookingModal students={students} onClose={() => setQuickBooking(false)} onCreated={(booking) => { setBookings((current) => [...current, booking].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))); setQuickBooking(false); }} />}
     </main>
   );
 }
@@ -249,6 +251,31 @@ function BookingView({ bookings, onOpen, onClassify }: { bookings: Booking[]; on
 
 function EmptyView({ title, message }: { title: string; message: string }) {
   return <section className="panel full-panel"><div className="panel-heading"><div><span className="leaf">❧</span><div><h2>{title}</h2><p>{message}</p></div></div></div><p className="empty-note">目前還沒有資料。</p></section>;
+}
+
+function QuickBookingModal({ students, onClose, onCreated }: { students: Student[]; onClose: () => void; onCreated: (booking: Booking) => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const student = String(form.get("student") || "").trim();
+    const localStart = String(form.get("start") || "");
+    const duration = Number(form.get("duration") || 90);
+    if (!student || !localStart) return;
+    const startDate = new Date(`${localStart}:00+08:00`);
+    const endDate = new Date(startDate.getTime() + duration * 60_000);
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/bookings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ student, coach: form.get("coach"), location: form.get("location"), start: startDate.toISOString(), end: endDate.toISOString() }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "建立預約失敗");
+      const endHour = new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hour12: false }).format(endDate);
+      const profile = students.find((item) => item.name === student);
+      onCreated({ id: result.id, student, coach: String(form.get("coach")), location: String(form.get("location")), date: localStart.slice(0, 10), time: `${localStart.slice(11)}–${endHour}`, type: profile?.type === "正課" ? "正課" : "體驗課", status: "已預約", record: false });
+    } catch (error) { window.alert(error instanceof Error ? error.message : "建立預約失敗"); }
+    finally { setSubmitting(false); }
+  }
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="快速預約下一堂"><div className="record-modal quick-book-modal"><header><div><span className="modal-kicker">NEXT SESSION</span><h2>快速預約下一堂</h2><p>建立前會自動檢查行事曆時段是否衝突</p></div><button aria-label="關閉" onClick={onClose}>×</button></header><form onSubmit={submit}><label>學員姓名<input name="student" list="student-options" required placeholder="輸入或選擇學員" /><datalist id="student-options">{students.map((student) => <option key={student.name} value={student.name} />)}</datalist></label><div className="form-row"><label>開始時間<input name="start" type="datetime-local" required /></label><label>課程長度<select name="duration" defaultValue="90"><option value="60">60 分鐘</option><option value="90">90 分鐘</option><option value="120">120 分鐘</option></select></label></div><div className="form-row"><label>教練<input name="coach" defaultValue="ANITA" required /></label><label>分店<input name="location" defaultValue="Le Gin 松南店" required /></label></div><footer><button type="button" className="ghost-button" onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={submitting}>{submitting ? "建立中…" : "確認預約"}</button></footer></form></div></div>;
 }
 
 function RecordModal({ booking, saved, onClose, onSave }: { booking: Booking; saved: boolean; onClose: () => void; onSave: (event: FormEvent<HTMLFormElement>) => void }) {
