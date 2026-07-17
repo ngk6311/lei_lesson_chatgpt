@@ -86,6 +86,20 @@ export default function Home() {
     window.setTimeout(() => setSelected(null), 900);
   }
 
+  async function classify(student: string, type: CourseType) {
+    const response = await fetch("/api/students/classify", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ student, type }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "分類儲存失敗");
+    setBookings((current) => current.map((booking) => booking.student === student ? { ...booking, type } : booking));
+    setStudents((current) => {
+      const exists = current.some((item) => item.name === student);
+      return exists ? current.map((item) => item.name === student ? { ...item, type } : item) : [...current, { name: student, type, sessions: 0, goal: "尚未填寫學習目標", last: "尚未上課" }];
+    });
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -121,7 +135,7 @@ export default function Home() {
         ) : active === "上課紀錄" ? (
           <RecordView bookings={pastBookings} onOpen={openRecord} />
         ) : active === "預約課程" ? (
-          <BookingView bookings={upcomingBookings} onOpen={openRecord} />
+          <BookingView bookings={upcomingBookings} onOpen={openRecord} onClassify={classify} />
         ) : active === "課程方案" ? (
           <EmptyView title="課程方案" message="課程方案會從 Google Sheet 的「課程方案」工作表顯示在這裡。" />
         ) : (
@@ -211,10 +225,27 @@ function RecordView({ bookings, onOpen }: { bookings: Booking[]; onOpen: (bookin
   return <section className="panel full-panel"><div className="panel-heading"><div><span className="leaf">❧</span><div><h2>上課紀錄</h2><p>這裡只顯示已經上完的歷史課程</p></div></div></div><div className="record-list">{bookings.map((booking) => { const [, month, day] = booking.date.split(/[/-]/); return <article key={booking.id}><div className="date-block"><b>{day}</b><span>{month} 月</span></div><div><h3>{booking.student}<Badge value={booking.type} /></h3><p>{booking.date} · {booking.time} · {booking.coach} · {booking.location}</p></div><span className={booking.record ? "record done" : "record"}>{booking.record ? "已填寫" : "待填寫"}</span><button className="outline-button" onClick={() => onOpen(booking)}>{booking.record ? "查看紀錄" : "開始填寫"}</button></article>;})}{bookings.length === 0 && <p className="empty-note">目前沒有歷史課程。</p>}</div></section>;
 }
 
-function BookingView({ bookings, onOpen }: { bookings: Booking[]; onOpen: (booking: Booking) => void }) {
+function BookingView({ bookings, onOpen, onClassify }: { bookings: Booking[]; onOpen: (booking: Booking) => void; onClassify: (student: string, type: CourseType) => Promise<void> }) {
   const [type, setType] = useState("全部");
+  const [mode, setMode] = useState<"calendar" | "list">("calendar");
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [saving, setSaving] = useState("");
+  const start = new Date();
+  start.setHours(12, 0, 0, 0);
+  start.setDate(start.getDate() - start.getDay() + 1 + weekOffset * 7);
+  const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(start); date.setDate(start.getDate() + index); return date; });
+  const keyOf = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
   const visible = bookings.filter((booking) => type === "全部" || booking.type === type);
-  return <section className="panel full-panel"><div className="panel-heading"><div><span className="leaf">❧</span><div><h2>未來預約</h2><p>今天起的預約依日期排列，不包含過去課程</p></div></div><div className="filters">{["全部", "體驗課", "正課", "待分類"].map((item) => <button key={item} className={type === item ? "selected" : ""} onClick={() => setType(item)}>{item}</button>)}</div></div><div className="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>學員</th><th>類型</th><th>教練／地點</th><th>操作</th></tr></thead><tbody>{visible.map((booking) => <tr key={booking.id}><td>{booking.date}</td><td className="time-cell">{booking.time}</td><td>{booking.student}</td><td><Badge value={booking.type} /></td><td>{booking.coach}<small>{booking.location}</small></td><td><button className="outline-button" onClick={() => onOpen(booking)}>查看／紀錄</button></td></tr>)}{visible.length === 0 && <tr><td colSpan={6}>目前沒有符合的未來預約。</td></tr>}</tbody></table></div></section>;
+  async function choose(booking: Booking, nextType: CourseType) {
+    setSaving(booking.student);
+    try { await onClassify(booking.student, nextType); }
+    catch (error) { window.alert(error instanceof Error ? error.message : "分類失敗"); }
+    finally { setSaving(""); }
+  }
+  return <section className="panel full-panel booking-view">
+    <div className="panel-heading"><div><span className="leaf">❧</span><div><h2>學員預約行事曆</h2><p>瀏覽每週課程，未分類學員可直接選擇體驗課或正課</p></div></div><div className="view-actions"><div className="filters">{["全部", "體驗課", "正課", "待分類"].map((item) => <button key={item} className={type === item ? "selected" : ""} onClick={() => setType(item)}>{item}</button>)}</div><div className="mode-switch"><button className={mode === "calendar" ? "selected" : ""} onClick={() => setMode("calendar")}>週行事曆</button><button className={mode === "list" ? "selected" : ""} onClick={() => setMode("list")}>列表</button></div></div></div>
+    {mode === "calendar" ? <><div className="calendar-toolbar"><button onClick={() => setWeekOffset((value) => value - 1)}>‹ 上一週</button><strong>{keyOf(days[0])} ～ {keyOf(days[6])}</strong><div><button onClick={() => setWeekOffset(0)}>本週</button><button onClick={() => setWeekOffset((value) => value + 1)}>下一週 ›</button></div></div><div className="week-grid">{days.map((day) => { const dateKey = keyOf(day); const items = visible.filter((booking) => booking.date === dateKey); return <section className="day-column" key={dateKey}><header><span>{new Intl.DateTimeFormat("zh-TW", { weekday: "short" }).format(day)}</span><b>{day.getDate()}</b></header><div>{items.map((booking) => <article className={`calendar-event ${booking.type === "待分類" ? "unclassified" : ""}`} key={booking.id}><time>{booking.time}</time><strong>{booking.student}</strong><small>{booking.coach} · {booking.location}</small>{booking.type === "待分類" ? <div className="quick-classify"><button disabled={saving === booking.student} onClick={() => choose(booking, "體驗課")}>體驗課</button><button disabled={saving === booking.student} onClick={() => choose(booking, "正課")}>正課</button></div> : <Badge value={booking.type} />}<button className="event-open" onClick={() => onOpen(booking)}>查看 ›</button></article>)}{items.length === 0 && <span className="no-booking">沒有課程</span>}</div></section>; })}</div></> : <div className="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>學員</th><th>類型／快速分類</th><th>教練／地點</th><th>操作</th></tr></thead><tbody>{visible.map((booking) => <tr key={booking.id}><td>{booking.date}</td><td className="time-cell">{booking.time}</td><td>{booking.student}</td><td>{booking.type === "待分類" ? <div className="quick-classify"><button onClick={() => choose(booking, "體驗課")}>體驗課</button><button onClick={() => choose(booking, "正課")}>正課</button></div> : <Badge value={booking.type} />}</td><td>{booking.coach}<small>{booking.location}</small></td><td><button className="outline-button" onClick={() => onOpen(booking)}>查看／紀錄</button></td></tr>)}{visible.length === 0 && <tr><td colSpan={6}>目前沒有符合的未來預約。</td></tr>}</tbody></table></div>}
+  </section>;
 }
 
 function EmptyView({ title, message }: { title: string; message: string }) {
