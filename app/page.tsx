@@ -29,7 +29,8 @@ export default function Home() {
   const [today, setToday] = useState("");
   const [selected, setSelected] = useState<Booking | null>(null);
   const [saved, setSaved] = useState(false);
-  const [quickBooking, setQuickBooking] = useState(false);
+  const [quickBookingDate, setQuickBookingDate] = useState<string | null>(null);
+  const [newStudent, setNewStudent] = useState(false);
 
   useEffect(() => {
     fetch("/api/bootstrap", { cache: "no-store" })
@@ -93,7 +94,6 @@ export default function Home() {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "分類儲存失敗");
-    setBookings((current) => current.map((booking) => booking.student === student ? { ...booking, type } : booking));
     setStudents((current) => {
       const exists = current.some((item) => item.name === student);
       return exists ? current.map((item) => item.name === student ? { ...item, type } : item) : [...current, { name: student, type, sessions: 0, goal: "尚未填寫學習目標", last: "尚未上課" }];
@@ -124,18 +124,18 @@ export default function Home() {
             <h1>{active === "今日總覽" ? "早安，ANITA 教練" : active}</h1>
             <p>今天也一起陪學員，溫柔地感受身體的改變。</p>
           </div>
-          <div className="top-actions"><button className="primary-button" onClick={() => setQuickBooking(true)}>＋ 快速預約下一堂</button><div className="coach-chip"><span>AN</span><div><b>ANITA</b><small>皮拉提斯教練</small></div></div></div>
+          <div className="top-actions"><button className="primary-button" onClick={() => setQuickBookingDate("")}>＋ 快速預約下一堂</button><div className="coach-chip"><span>AN</span><div><b>ANITA</b><small>皮拉提斯教練</small></div></div></div>
         </header>
 
         {loading && <div className="system-message">正在讀取 Google 行事曆與學員資料…</div>}
         {loadError && <div className="system-message error">資料連線失敗：{loadError}</div>}
 
         {active === "學員資料" ? (
-          <StudentView students={students} onBack={() => setActive("今日總覽")} />
+          <StudentView students={students} onBack={() => setActive("今日總覽")} onAdd={() => setNewStudent(true)} />
         ) : active === "上課紀錄" ? (
           <RecordView bookings={pastBookings} onOpen={openRecord} />
         ) : active === "預約課程" ? (
-          <BookingView bookings={bookings} onOpen={openRecord} onClassify={classify} />
+          <BookingView bookings={bookings} onOpen={openRecord} onClassify={classify} onDateClick={(date) => setQuickBookingDate(date)} />
         ) : active === "課程方案" ? (
           <EmptyView title="課程方案" message="課程方案會從 Google Sheet 的「課程方案」工作表顯示在這裡。" />
         ) : (
@@ -199,7 +199,8 @@ export default function Home() {
       </section>
 
       {selected && <RecordModal booking={selected} saved={saved} onClose={() => setSelected(null)} onSave={saveRecord} />}
-      {quickBooking && <QuickBookingModal students={students} onClose={() => setQuickBooking(false)} onCreated={(booking) => { setBookings((current) => [...current, booking].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))); setQuickBooking(false); }} />}
+      {quickBookingDate !== null && <QuickBookingModal students={students} initialDate={quickBookingDate} onClose={() => setQuickBookingDate(null)} onCreated={(booking) => { setBookings((current) => [...current, booking].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))); setQuickBookingDate(null); }} />}
+      {newStudent && <NewStudentModal onClose={() => setNewStudent(false)} onCreate={async (name, type) => { await classify(name, type); setNewStudent(false); }} />}
     </main>
   );
 }
@@ -213,11 +214,13 @@ function Badge({ value }: { value: string }) {
   return <span className={`badge ${className}`}>{value}</span>;
 }
 
-function StudentView({ students, onBack }: { students: Student[]; onBack: () => void }) {
+function StudentView({ students, onBack, onAdd }: { students: Student[]; onBack: () => void; onAdd: () => void }) {
   const [query, setQuery] = useState("");
-  const visible = students.filter((student) => student.name.includes(query));
+  const [stage, setStage] = useState("全部");
+  const visible = students.filter((student) => student.name.includes(query) && (stage === "全部" || student.type === stage));
   return <section className="panel full-panel">
-    <div className="panel-heading student-heading"><div><span className="leaf">❧</span><div><h2>學員資料</h2><p>追蹤每一位學員的目標與學習進度</p></div></div><div className="student-actions"><input aria-label="搜尋學員" placeholder="搜尋學員姓名" value={query} onChange={(e) => setQuery(e.target.value)} /><button className="primary-button">＋ 新增學員</button></div></div>
+    <div className="panel-heading student-heading"><div><span className="leaf">❧</span><div><h2>學員資料</h2><p>學員目前階段與每堂課類型分開保存</p></div></div><div className="student-actions"><input aria-label="搜尋學員" placeholder="搜尋學員姓名" value={query} onChange={(e) => setQuery(e.target.value)} /><button className="primary-button" onClick={onAdd}>＋ 新增學員</button></div></div>
+    <div className="filters student-stage-tabs">{["全部", "體驗課", "正課"].map((item) => <button key={item} className={stage === item ? "selected" : ""} onClick={() => setStage(item)}>{item === "體驗課" ? "體驗課學生" : item === "正課" ? "正課學生" : `全部 ${students.length}`}</button>)}</div>
     <div className="student-grid">{visible.map((student) => <article className="student-card" key={student.name}><div className="avatar">{student.name.slice(0, 1)}</div><div className="student-card-top"><Badge value={student.type} /><span>最近：{student.last}</span></div><h3>{student.name}</h3><p>{student.goal}</p><div className="student-progress"><span>剩餘堂數</span><strong>{student.sessions || "—"}</strong></div><button onClick={onBack}>查看完整紀錄 <span>›</span></button></article>)}</div>
   </section>;
 }
@@ -226,7 +229,7 @@ function RecordView({ bookings, onOpen }: { bookings: Booking[]; onOpen: (bookin
   return <section className="panel full-panel"><div className="panel-heading"><div><span className="leaf">❧</span><div><h2>上課紀錄</h2><p>這裡只顯示已經上完的歷史課程</p></div></div></div><div className="record-list">{bookings.map((booking) => { const [, month, day] = booking.date.split(/[/-]/); return <article key={booking.id}><div className="date-block"><b>{day}</b><span>{month} 月</span></div><div><h3>{booking.student}<Badge value={booking.type} /></h3><p>{booking.date} · {booking.time} · {booking.coach} · {booking.location}</p></div><span className={booking.record ? "record done" : "record"}>{booking.record ? "已填寫" : "待填寫"}</span><button className="outline-button" onClick={() => onOpen(booking)}>{booking.record ? "查看紀錄" : "開始填寫"}</button></article>;})}{bookings.length === 0 && <p className="empty-note">目前沒有歷史課程。</p>}</div></section>;
 }
 
-function BookingView({ bookings, onOpen, onClassify }: { bookings: Booking[]; onOpen: (booking: Booking) => void; onClassify: (student: string, type: CourseType) => Promise<void> }) {
+function BookingView({ bookings, onOpen, onClassify, onDateClick }: { bookings: Booking[]; onOpen: (booking: Booking) => void; onClassify: (student: string, type: CourseType) => Promise<void>; onDateClick: (date: string) => void }) {
   const [type, setType] = useState("全部");
   const [mode, setMode] = useState<"calendar" | "list">("calendar");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -245,7 +248,7 @@ function BookingView({ bookings, onOpen, onClassify }: { bookings: Booking[]; on
   }
   return <section className="panel full-panel booking-view">
     <div className="panel-heading"><div><span className="leaf">❧</span><div><h2>學員預約行事曆</h2><p>瀏覽每週課程，未分類學員可直接選擇體驗課或正課</p></div></div><div className="view-actions"><div className="filters">{["全部", "體驗課", "正課", "待分類"].map((item) => <button key={item} className={type === item ? "selected" : ""} onClick={() => setType(item)}>{item}</button>)}</div><div className="mode-switch"><button className={mode === "calendar" ? "selected" : ""} onClick={() => setMode("calendar")}>週行事曆</button><button className={mode === "list" ? "selected" : ""} onClick={() => setMode("list")}>列表</button></div></div></div>
-    {mode === "calendar" ? <><div className="calendar-toolbar"><button onClick={() => setWeekOffset((value) => value - 1)}>‹ 上一週</button><strong>{keyOf(days[0])} ～ {keyOf(days[6])}</strong><div><button onClick={() => setWeekOffset(0)}>本週</button><button onClick={() => setWeekOffset((value) => value + 1)}>下一週 ›</button></div></div><div className="week-grid">{days.map((day) => { const dateKey = keyOf(day); const items = visible.filter((booking) => booking.date === dateKey); return <section className="day-column" key={dateKey}><header><span>{new Intl.DateTimeFormat("zh-TW", { weekday: "short" }).format(day)}</span><b>{day.getDate()}</b></header><div>{items.map((booking) => <article className={`calendar-event ${booking.type === "待分類" ? "unclassified" : ""}`} key={booking.id}><time>{booking.time}</time><strong>{booking.student}</strong><small>{booking.coach} · {booking.location}</small>{booking.type === "待分類" ? <div className="quick-classify"><button disabled={saving === booking.student} onClick={() => choose(booking, "體驗課")}>體驗課</button><button disabled={saving === booking.student} onClick={() => choose(booking, "正課")}>正課</button></div> : <Badge value={booking.type} />}<button className="event-open" onClick={() => onOpen(booking)}>查看 ›</button></article>)}{items.length === 0 && <span className="no-booking">沒有課程</span>}</div></section>; })}</div></> : <div className="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>學員</th><th>類型／快速分類</th><th>教練／地點</th><th>操作</th></tr></thead><tbody>{visible.map((booking) => <tr key={booking.id}><td>{booking.date}</td><td className="time-cell">{booking.time}</td><td>{booking.student}</td><td>{booking.type === "待分類" ? <div className="quick-classify"><button onClick={() => choose(booking, "體驗課")}>體驗課</button><button onClick={() => choose(booking, "正課")}>正課</button></div> : <Badge value={booking.type} />}</td><td>{booking.coach}<small>{booking.location}</small></td><td><button className="outline-button" onClick={() => onOpen(booking)}>查看／紀錄</button></td></tr>)}{visible.length === 0 && <tr><td colSpan={6}>目前沒有符合的預約。</td></tr>}</tbody></table></div>}
+    {mode === "calendar" ? <><div className="calendar-toolbar"><div><button onClick={() => setWeekOffset((value) => value - 1)}>‹ 上一週</button><button onClick={() => setWeekOffset(0)}>本週</button><button onClick={() => setWeekOffset((value) => value + 1)}>下一週 ›</button></div><strong>{keyOf(days[0])} ～ {keyOf(days[6])}</strong></div><div className="week-grid">{days.map((day) => { const dateKey = keyOf(day); const items = visible.filter((booking) => booking.date === dateKey); return <section className="day-column" key={dateKey}><header onClick={() => onDateClick(dateKey)} title="點擊這一天快速預約"><span>{new Intl.DateTimeFormat("zh-TW", { weekday: "short" }).format(day)}</span><b>{day.getDate()}</b></header><div>{items.map((booking) => <article className={`calendar-event ${booking.type === "待分類" ? "unclassified" : ""}`} key={booking.id}><time>{booking.time}</time><strong>{booking.student}</strong><small>{booking.coach} · {booking.location}</small>{booking.type === "待分類" ? <div className="quick-classify"><button disabled={saving === booking.student} onClick={() => choose(booking, "體驗課")}>體驗課</button><button disabled={saving === booking.student} onClick={() => choose(booking, "正課")}>正課</button></div> : <Badge value={booking.type} />}<button className="event-open" onClick={() => onOpen(booking)}>查看 ›</button></article>)}{items.length === 0 && <button className="no-booking" onClick={() => onDateClick(dateKey)}>＋ 點此預約</button>}</div></section>; })}</div></> : <div className="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>學員</th><th>類型／快速分類</th><th>教練／地點</th><th>操作</th></tr></thead><tbody>{visible.map((booking) => <tr key={booking.id}><td>{booking.date}</td><td className="time-cell">{booking.time}</td><td>{booking.student}</td><td>{booking.type === "待分類" ? <div className="quick-classify"><button onClick={() => choose(booking, "體驗課")}>體驗課</button><button onClick={() => choose(booking, "正課")}>正課</button></div> : <Badge value={booking.type} />}</td><td>{booking.coach}<small>{booking.location}</small></td><td><button className="outline-button" onClick={() => onOpen(booking)}>查看／紀錄</button></td></tr>)}{visible.length === 0 && <tr><td colSpan={6}>目前沒有符合的預約。</td></tr>}</tbody></table></div>}
   </section>;
 }
 
@@ -253,29 +256,35 @@ function EmptyView({ title, message }: { title: string; message: string }) {
   return <section className="panel full-panel"><div className="panel-heading"><div><span className="leaf">❧</span><div><h2>{title}</h2><p>{message}</p></div></div></div><p className="empty-note">目前還沒有資料。</p></section>;
 }
 
-function QuickBookingModal({ students, onClose, onCreated }: { students: Student[]; onClose: () => void; onCreated: (booking: Booking) => void }) {
+function QuickBookingModal({ students, initialDate, onClose, onCreated }: { students: Student[]; initialDate: string; onClose: () => void; onCreated: (booking: Booking) => void }) {
   const [submitting, setSubmitting] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const student = String(form.get("student") || "").trim();
     const localStart = String(form.get("start") || "");
-    const duration = Number(form.get("duration") || 90);
+    const duration = Number(form.get("duration") || 60);
+    const courseType = String(form.get("type") || "體驗課") as CourseType;
     if (!student || !localStart) return;
     const startDate = new Date(`${localStart}:00+08:00`);
     const endDate = new Date(startDate.getTime() + duration * 60_000);
     setSubmitting(true);
     try {
-      const response = await fetch("/api/bookings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ student, coach: form.get("coach"), location: form.get("location"), start: startDate.toISOString(), end: endDate.toISOString() }) });
+      const response = await fetch("/api/bookings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ student, type: courseType, coach: form.get("coach"), location: form.get("location"), start: startDate.toISOString(), end: endDate.toISOString() }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "建立預約失敗");
       const endHour = new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hour12: false }).format(endDate);
-      const profile = students.find((item) => item.name === student);
-      onCreated({ id: result.id, student, coach: String(form.get("coach")), location: String(form.get("location")), date: localStart.slice(0, 10), time: `${localStart.slice(11)}–${endHour}`, type: profile?.type === "正課" ? "正課" : "體驗課", status: "已預約", record: false });
+      onCreated({ id: result.id, student, coach: String(form.get("coach")), location: String(form.get("location")), date: localStart.slice(0, 10), time: `${localStart.slice(11)}–${endHour}`, type: courseType, status: "已預約", record: false });
     } catch (error) { window.alert(error instanceof Error ? error.message : "建立預約失敗"); }
     finally { setSubmitting(false); }
   }
-  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="快速預約下一堂"><div className="record-modal quick-book-modal"><header><div><span className="modal-kicker">NEXT SESSION</span><h2>快速預約下一堂</h2><p>建立前會自動檢查行事曆時段是否衝突</p></div><button aria-label="關閉" onClick={onClose}>×</button></header><form onSubmit={submit}><label>學員姓名<input name="student" list="student-options" required placeholder="輸入或選擇學員" /><datalist id="student-options">{students.map((student) => <option key={student.name} value={student.name} />)}</datalist></label><div className="form-row"><label>開始時間<input name="start" type="datetime-local" required /></label><label>課程長度<select name="duration" defaultValue="90"><option value="60">60 分鐘</option><option value="90">90 分鐘</option><option value="120">120 分鐘</option></select></label></div><div className="form-row"><label>教練<input name="coach" defaultValue="ANITA" required /></label><label>分店<input name="location" defaultValue="Le Gin 松南店" required /></label></div><footer><button type="button" className="ghost-button" onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={submitting}>{submitting ? "建立中…" : "確認預約"}</button></footer></form></div></div>;
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="快速預約下一堂"><div className="record-modal quick-book-modal"><header><div><span className="modal-kicker">NEXT SESSION</span><h2>快速預約下一堂</h2><p>可直接輸入新學員姓名，建立前會檢查撞課</p></div><button aria-label="關閉" onClick={onClose}>×</button></header><form onSubmit={submit}><label>學員姓名<input name="student" list="student-options" required placeholder="輸入新學員，或選擇既有學員" /><datalist id="student-options">{students.map((student) => <option key={student.name} value={student.name} />)}</datalist></label><div className="form-row"><label>開始時間<input name="start" type="datetime-local" defaultValue={initialDate ? `${initialDate}T09:00` : ""} required /></label><label>課程長度<select name="duration" defaultValue="60"><option value="60">60 分鐘</option><option value="90">90 分鐘</option><option value="120">120 分鐘</option></select></label></div><div className="form-row"><label>這一堂課<select name="type" defaultValue="體驗課"><option>體驗課</option><option>正課</option></select></label><label>教練<input name="coach" defaultValue="ANITA" required /></label></div><label>分店<input name="location" defaultValue="Le Gin 松南店" required /></label><footer><button type="button" className="ghost-button" onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={submitting}>{submitting ? "建立中…" : "確認預約"}</button></footer></form></div></div>;
+}
+
+function NewStudentModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, type: CourseType) => Promise<void> }) {
+  const [submitting, setSubmitting] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); setSubmitting(true); try { await onCreate(String(form.get("name") || "").trim(), String(form.get("type")) as CourseType); } catch (error) { window.alert(error instanceof Error ? error.message : "新增失敗"); setSubmitting(false); } }
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="record-modal quick-book-modal"><header><div><span className="modal-kicker">NEW STUDENT</span><h2>新增學員</h2><p>轉過來的舊生可以直接建立為正課學生</p></div><button onClick={onClose}>×</button></header><form onSubmit={submit}><label>學員姓名<input name="name" required autoFocus /></label><label>目前階段<select name="type" defaultValue="體驗課"><option>體驗課</option><option>正課</option></select></label><footer><button type="button" className="ghost-button" onClick={onClose}>取消</button><button className="primary-button" disabled={submitting}>{submitting ? "建立中…" : "建立學員"}</button></footer></form></div></div>;
 }
 
 function RecordModal({ booking, saved, onClose, onSave }: { booking: Booking; saved: boolean; onClose: () => void; onSave: (event: FormEvent<HTMLFormElement>) => void }) {
