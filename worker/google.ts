@@ -134,3 +134,31 @@ export async function appendRecord(env: GoogleEnv, body: Record<string, unknown>
   await googleFetch(env, url, { method: "POST", body: JSON.stringify({ values }) });
   return { ok: true, createdAt: now };
 }
+
+export async function classifyStudent(env: GoogleEnv, body: Record<string, unknown>) {
+  const student = String(body.student || "").trim();
+  const type = String(body.type || "");
+  if (!student || !["體驗課", "正課"].includes(type)) throw new Error("學員姓名或課程類型不正確");
+  const token = await accessToken(env);
+  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("學員資料!A1:L")}`;
+  const readResponse = await fetch(readUrl, { headers: { authorization: `Bearer ${token}` } });
+  if (!readResponse.ok) throw new Error(`無法讀取學員資料 (${readResponse.status})`);
+  const data = await readResponse.json() as { values?: string[][] };
+  const rows = data.values || [];
+  const rowIndex = rows.findIndex((row, index) => index > 0 && row[1]?.trim() === student);
+  const now = new Date().toISOString();
+  if (rowIndex >= 1) {
+    const apiRow = rowIndex + 1;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values:batchUpdate`;
+    await googleFetch(env, url, { method: "POST", body: JSON.stringify({ valueInputOption: "USER_ENTERED", data: [
+      { range: `學員資料!E${apiRow}`, values: [[type]] },
+      { range: `學員資料!L${apiRow}`, values: [[now]] },
+    ] }) });
+  } else {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("學員資料!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+    await googleFetch(env, url, { method: "POST", body: JSON.stringify({ values: [[
+      crypto.randomUUID(), student, "", "", type, "", "", "", "", "", now, now,
+    ]] }) });
+  }
+  return { ok: true, student, type };
+}
