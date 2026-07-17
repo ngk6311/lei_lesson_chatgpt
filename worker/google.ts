@@ -77,7 +77,7 @@ function taipeiTime(date: Date) {
 
 export async function getBootstrap(env: GoogleEnv) {
   const token = await accessToken(env);
-  const sheetRanges = ["學員資料!A1:L", "預約紀錄!A1:M", "上課紀錄!A1:M", "課程方案!A1:I"];
+  const sheetRanges = ["學員資料!A1:N", "預約紀錄!A1:M", "上課紀錄!A1:M", "課程方案!A1:I"];
   const sheetsUrl = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values:batchGet`);
   sheetRanges.forEach((range) => sheetsUrl.searchParams.append("ranges", range));
   // Le Gin 從 2026 年 7 月開始使用本系統，因此完整保留 7 月起的歷史課程。
@@ -102,7 +102,7 @@ export async function getBootstrap(env: GoogleEnv) {
   const calendarData = await calendarResponse.json() as { items?: CalendarEvent[] };
   const holidayConnected = Boolean(holidayResponse?.ok);
   const holidayData = holidayResponse?.ok ? await holidayResponse.json() as { items?: CalendarEvent[] } : { items: [] };
-  const holidayDates = [...new Set((holidayData.items || []).flatMap((event) => {
+  const holidayDates = [...new Set((holidayData.items || []).filter((event) => String(event.summary || "").trim() === "放假").flatMap((event) => {
     const startText = event.start?.dateTime || event.start?.date;
     const endText = event.end?.dateTime || event.end?.date;
     if (!startText) return [];
@@ -161,7 +161,7 @@ export async function classifyStudent(env: GoogleEnv, body: Record<string, unkno
   const type = String(body.type || "");
   if (!student || !["體驗課", "正課"].includes(type)) throw new Error("學員姓名或課程類型不正確");
   const token = await accessToken(env);
-  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("學員資料!A1:L")}`;
+  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("學員資料!A1:N")}`;
   const readResponse = await fetch(readUrl, { headers: { authorization: `Bearer ${token}` } });
   if (!readResponse.ok) throw new Error(`無法讀取學員資料 (${readResponse.status})`);
   const data = await readResponse.json() as { values?: string[][] };
@@ -176,12 +176,32 @@ export async function classifyStudent(env: GoogleEnv, body: Record<string, unkno
       { range: `學員資料!L${apiRow}`, values: [[now]] },
     ] }) });
   } else {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("學員資料!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("學員資料!A:N")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
     await googleFetch(env, url, { method: "POST", body: JSON.stringify({ values: [[
-      crypto.randomUUID(), student, "", "", type, "", "", "", "", "", now, now,
+      crypto.randomUUID(), student, "", "", type, "", "", "", "", "", now, now, "", "[]",
     ]] }) });
   }
   return { ok: true, student, type };
+}
+
+export async function updateStudentProfile(env: GoogleEnv, body: Record<string, unknown>) {
+  const student = String(body.student || "").trim();
+  const note = String(body.note || "").trim();
+  const tags = Array.isArray(body.tags) ? [...new Set(body.tags.map((tag) => String(tag).trim()).filter(Boolean))] : [];
+  if (!student) throw new Error("缺少學員姓名");
+  const token = await accessToken(env);
+  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("學員資料!A1:N")}`;
+  const response = await fetch(readUrl, { headers: { authorization: `Bearer ${token}` } });
+  const rows = (await response.json() as { values?: string[][] }).values || [];
+  const index = rows.findIndex((row, rowIndex) => rowIndex > 0 && row[1]?.trim() === student);
+  if (index < 1) throw new Error("找不到這位學員");
+  const row = index + 1;
+  await googleFetch(env, `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values:batchUpdate`, { method: "POST", body: JSON.stringify({ valueInputOption: "USER_ENTERED", data: [
+    { range: `學員資料!M${row}`, values: [[note]] },
+    { range: `學員資料!N${row}`, values: [[JSON.stringify(tags)]] },
+    { range: `學員資料!L${row}`, values: [[new Date().toISOString()]] },
+  ] }) });
+  return { ok: true, student, note, tags };
 }
 
 export async function createBooking(env: GoogleEnv, body: Record<string, unknown>) {
