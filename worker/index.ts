@@ -1,7 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
-import { appendRecord, cancelBooking, classifyStudent, createBooking, getBootstrap, rescheduleBooking, type GoogleEnv } from "./google";
+import { appendRecord, cancelBooking, classifyStudent, createBooking, getBootstrap, rescheduleBooking, updateStudentProfile, type GoogleEnv } from "./google";
 
 interface Env extends GoogleEnv {
   ASSETS: Fetcher;
@@ -55,6 +55,11 @@ const worker = {
         console.error(error);
         return Response.json({ error: error instanceof Error ? error.message : "分類儲存失敗" }, { status: 500 });
       }
+    }
+
+    if (url.pathname === "/api/students/profile" && request.method === "PATCH") {
+      try { return Response.json(await updateStudentProfile(env, await request.json() as Record<string, unknown>)); }
+      catch (error) { return Response.json({ error: error instanceof Error ? error.message : "學員資料儲存失敗" }, { status: 500 }); }
     }
 
     if (url.pathname === "/api/bookings" && request.method === "POST") {
