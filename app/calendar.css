@@ -23,6 +23,23 @@
   box-shadow: 0 7px 16px rgba(94, 66, 44, 0.1);
 }
 
+.calendar-event.trial-event {
+  border-color: #efd8c4;
+  border-left-color: #e8a176;
+  background: #fff8f1;
+}
+
+.calendar-event.regular-event {
+  border-color: #cdd9e7;
+  border-left-color: #7896b8;
+  background: linear-gradient(145deg, #f3f7fc, #f9fbfe);
+}
+
+.calendar-event.regular-event time,
+.calendar-event.regular-event .event-open {
+  color: #58779a;
+}
+
 .holiday-day {
   cursor: not-allowed;
   background: #f1f7ed;
@@ -76,4 +93,63 @@
   margin-right: auto;
   border-color: #d98a80;
   color: #a84f47;
+}
+
+.student-stage-tabs {
+  margin-bottom: 18px;
+  justify-content: flex-start;
+}
+
+.student-tags,
+.tag-list,
+.tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.student-tags {
+  margin: 9px 0;
+}
+
+.student-tags span,
+.tag-list button,
+.tag-suggestions button {
+  border: 1px solid #d7dfd0;
+  border-radius: 999px;
+  background: #eef4ea;
+  color: #66745e;
+  padding: 5px 9px;
+  font-size: 9px;
+}
+
+.tag-editor {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  padding: 9px;
+}
+
+.tag-editor .tag-list button,
+.tag-suggestions button {
+  cursor: pointer;
+}
+
+.tag-editor .tag-list button span {
+  margin-left: 5px;
+}
+
+.tag-editor input {
+  border: 0;
+  box-shadow: none;
+  padding: 9px 3px 2px;
+}
+
+.tag-suggestions {
+  align-items: center;
+}
+
+.tag-suggestions small {
+  width: 100%;
+  color: var(--muted);
 }
