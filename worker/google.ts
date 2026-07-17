@@ -8,6 +8,7 @@ export type GoogleEnv = {
   GOOGLE_CREDENTIALS_JSON: string;
   GOOGLE_SHEET_ID: string;
   GOOGLE_CALENDAR_ID: string;
+  GOOGLE_HOLIDAY_CALENDAR_ID?: string;
 };
 
 type CalendarEvent = {
@@ -88,14 +89,29 @@ export async function getBootstrap(env: GoogleEnv) {
   calendarUrl.searchParams.set("timeMin", start.toISOString());
   calendarUrl.searchParams.set("timeMax", end.toISOString());
   calendarUrl.searchParams.set("maxResults", "500");
-  const [sheetResponse, calendarResponse] = await Promise.all([
+  const holidayUrl = env.GOOGLE_HOLIDAY_CALENDAR_ID ? new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.GOOGLE_HOLIDAY_CALENDAR_ID)}/events`) : null;
+  if (holidayUrl) { holidayUrl.searchParams.set("singleEvents", "true"); holidayUrl.searchParams.set("timeMin", start.toISOString()); holidayUrl.searchParams.set("timeMax", end.toISOString()); holidayUrl.searchParams.set("maxResults", "500"); }
+  const [sheetResponse, calendarResponse, holidayResponse] = await Promise.all([
     fetch(sheetsUrl, { headers: { authorization: `Bearer ${token}` } }),
     fetch(calendarUrl, { headers: { authorization: `Bearer ${token}` } }),
+    holidayUrl ? fetch(holidayUrl, { headers: { authorization: `Bearer ${token}` } }) : Promise.resolve(null),
   ]);
   if (!sheetResponse.ok) throw new Error(`無法讀取試算表 (${sheetResponse.status})`);
   if (!calendarResponse.ok) throw new Error(`無法讀取行事曆 (${calendarResponse.status})`);
   const sheetData = await sheetResponse.json() as { valueRanges?: Array<{ values?: string[][] }> };
   const calendarData = await calendarResponse.json() as { items?: CalendarEvent[] };
+  const holidayConnected = Boolean(holidayResponse?.ok);
+  const holidayData = holidayResponse?.ok ? await holidayResponse.json() as { items?: CalendarEvent[] } : { items: [] };
+  const holidayDates = [...new Set((holidayData.items || []).flatMap((event) => {
+    const startText = event.start?.dateTime || event.start?.date;
+    const endText = event.end?.dateTime || event.end?.date;
+    if (!startText) return [];
+    const dates: string[] = [];
+    const cursor = new Date(startText); const finish = endText ? new Date(endText) : new Date(cursor);
+    if (event.start?.date && event.end?.date) finish.setDate(finish.getDate() - 1);
+    while (cursor <= finish) { dates.push(taipeiDay(cursor)); cursor.setDate(cursor.getDate() + 1); }
+    return dates;
+  }))];
   const students = rowsToObjects(sheetData.valueRanges?.[0]?.values);
   const reservations = rowsToObjects(sheetData.valueRanges?.[1]?.values);
   const records = rowsToObjects(sheetData.valueRanges?.[2]?.values);
@@ -124,7 +140,7 @@ export async function getBootstrap(env: GoogleEnv) {
       record: recordBookingIds.has(event.id),
     };
   });
-  return { bookings, students, reservations, records, packages, today: taipeiDay() };
+  return { bookings, students, reservations, records, packages, holidays: holidayDates, holidayConnected, today: taipeiDay() };
 }
 
 export async function appendRecord(env: GoogleEnv, body: Record<string, unknown>) {
@@ -201,4 +217,40 @@ export async function createBooking(env: GoogleEnv, body: Record<string, unknown
     courseType, "已預約", "尚未填寫", now,
   ]] }) });
   return { ok: true, id: event.id, student, coach, location, start, end, type: courseType };
+}
+
+async function updateReservationFields(env: GoogleEnv, eventId: string, fields: Array<{ column: string; value: string }>) {
+  const token = await accessToken(env);
+  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("預約紀錄!A1:M")}`;
+  const response = await fetch(readUrl, { headers: { authorization: `Bearer ${token}` } });
+  const rows = (await response.json() as { values?: string[][] }).values || [];
+  const index = rows.findIndex((row, rowIndex) => rowIndex > 0 && row[1] === eventId);
+  if (index < 1) return;
+  const row = index + 1;
+  const data = [...fields, { column: "M", value: new Date().toISOString() }].map((item) => ({ range: `預約紀錄!${item.column}${row}`, values: [[item.value]] }));
+  await googleFetch(env, `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values:batchUpdate`, { method: "POST", body: JSON.stringify({ valueInputOption: "USER_ENTERED", data }) });
+}
+
+export async function rescheduleBooking(env: GoogleEnv, eventId: string, body: Record<string, unknown>) {
+  const start = String(body.start || ""); const end = String(body.end || "");
+  if (!eventId || !start || !end || new Date(end) <= new Date(start)) throw new Error("新的預約時間不正確");
+  const token = await accessToken(env);
+  const calendarBase = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.GOOGLE_CALENDAR_ID)}/events`;
+  const conflictUrl = new URL(calendarBase); conflictUrl.searchParams.set("singleEvents", "true"); conflictUrl.searchParams.set("timeMin", new Date(start).toISOString()); conflictUrl.searchParams.set("timeMax", new Date(end).toISOString());
+  const check = await fetch(conflictUrl, { headers: { authorization: `Bearer ${token}` } });
+  const conflicts = ((await check.json() as { items?: CalendarEvent[] }).items || []).filter((event) => event.status !== "cancelled" && event.id !== eventId);
+  if (conflicts.length) throw new Error("這個時段已有其他課程，請選擇不同時間");
+  await googleFetch(env, `${calendarBase}/${encodeURIComponent(eventId)}`, { method: "PATCH", body: JSON.stringify({ start: { dateTime: start, timeZone: "Asia/Taipei" }, end: { dateTime: end, timeZone: "Asia/Taipei" } }) });
+  await updateReservationFields(env, eventId, [{ column: "H", value: start }, { column: "I", value: end }]);
+  return { ok: true, id: eventId, start, end };
+}
+
+export async function cancelBooking(env: GoogleEnv, eventId: string) {
+  if (!eventId) throw new Error("找不到預約 ID");
+  const token = await accessToken(env);
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.GOOGLE_CALENDAR_ID)}/events/${encodeURIComponent(eventId)}`;
+  const response = await fetch(url, { method: "DELETE", headers: { authorization: `Bearer ${token}` } });
+  if (!response.ok && response.status !== 410) throw new Error(`取消行事曆預約失敗 (${response.status})`);
+  await updateReservationFields(env, eventId, [{ column: "K", value: "已取消" }]);
+  return { ok: true, id: eventId };
 }
