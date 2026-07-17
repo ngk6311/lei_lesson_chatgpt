@@ -1,0 +1,79 @@
+.day-column {
+  cursor: pointer;
+}
+
+.day-column:hover:not(.holiday-day) {
+  background: #fffaf3;
+}
+
+.day-column > header {
+  transition: background 160ms ease;
+}
+
+.day-column:hover:not(.holiday-day) > header {
+  background: #f9eadb;
+}
+
+.calendar-event {
+  cursor: pointer;
+}
+
+.calendar-event:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 7px 16px rgba(94, 66, 44, 0.1);
+}
+
+.holiday-day {
+  cursor: not-allowed;
+  background: #f1f7ed;
+  border-left-color: #d4e2cc;
+}
+
+.holiday-day > header {
+  background: #e5f0df;
+  border-bottom-color: #cfdfc7;
+}
+
+.holiday-day > header b {
+  background: #f8fcf5;
+  color: #66785d;
+}
+
+.holiday-card {
+  padding: 14px 10px;
+  border: 1px solid #cbdcc3;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #e8f3e3, #f4f9f1);
+  color: #607257;
+  text-align: center;
+  display: grid;
+  gap: 4px;
+}
+
+.holiday-card > span {
+  font-size: 20px;
+}
+
+.holiday-card strong {
+  font-family: Georgia, "Noto Serif TC", serif;
+  font-size: 13px;
+}
+
+.holiday-card small {
+  font-size: 9px;
+  color: #7b8c72;
+}
+
+.no-booking {
+  width: 100%;
+  border: 1px dashed #e0cbb8;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+}
+
+.cancel-action {
+  margin-right: auto;
+  border-color: #d98a80;
+  color: #a84f47;
+}
