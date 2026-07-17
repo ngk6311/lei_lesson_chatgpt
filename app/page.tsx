@@ -17,7 +17,7 @@ type Booking = {
   location: string;
 };
 
-type Student = { name: string; type: string; sessions: number; goal: string; last: string };
+type Student = { name: string; type: string; sessions: number; goal: string; last: string; note: string; tags: string[] };
 
 export default function Home() {
   const [active, setActive] = useState("今日總覽");
@@ -34,6 +34,7 @@ export default function Home() {
   const [holidays, setHolidays] = useState<string[]>([]);
   const [holidayConnected, setHolidayConnected] = useState(true);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
 
   useEffect(() => {
     fetch("/api/bootstrap", { cache: "no-store" })
@@ -47,7 +48,8 @@ export default function Home() {
         setStudents((data.students || []).map((student: Record<string, string>) => ({
           name: student["姓名"], type: student["學員階段"] || "待分類",
           sessions: Number(student["剩餘堂數"] || 0),
-          goal: student["主要目標"] || "尚未填寫學習目標", last: "查看紀錄",
+          goal: student["主要目標"] || "尚未填寫學習目標", last: "查看紀錄", note: student["備註"] || "",
+          tags: (() => { try { return JSON.parse(student["標籤"] || "[]"); } catch { return String(student["標籤"] || "").split(/[,、]/).filter(Boolean); } })(),
         })));
       })
       .catch((error) => setLoadError(error.message))
@@ -101,7 +103,7 @@ export default function Home() {
     if (!response.ok) throw new Error(result.error || "分類儲存失敗");
     setStudents((current) => {
       const exists = current.some((item) => item.name === student);
-      return exists ? current.map((item) => item.name === student ? { ...item, type } : item) : [...current, { name: student, type, sessions: 0, goal: "尚未填寫學習目標", last: "尚未上課" }];
+      return exists ? current.map((item) => item.name === student ? { ...item, type } : item) : [...current, { name: student, type, sessions: 0, goal: "尚未填寫學習目標", last: "尚未上課", note: "", tags: [] }];
     });
   }
 
@@ -136,7 +138,7 @@ export default function Home() {
         {loadError && <div className="system-message error">資料連線失敗：{loadError}</div>}
 
         {active === "學員資料" ? (
-          <StudentView students={students} onBack={() => setActive("今日總覽")} onAdd={() => setNewStudent(true)} />
+          <StudentView students={students} onEdit={setEditingStudent} onAdd={() => setNewStudent(true)} />
         ) : active === "上課紀錄" ? (
           <RecordView bookings={pastBookings} onOpen={openRecord} />
         ) : active === "預約課程" ? (
@@ -207,6 +209,7 @@ export default function Home() {
       {quickBookingDate !== null && <QuickBookingModal students={students} initialDate={quickBookingDate} onClose={() => setQuickBookingDate(null)} onCreated={(booking) => { setBookings((current) => [...current, booking].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))); setQuickBookingDate(null); }} />}
       {newStudent && <NewStudentModal onClose={() => setNewStudent(false)} onCreate={async (name, type) => { await classify(name, type); setNewStudent(false); }} />}
       {editingBooking && <BookingManageModal booking={editingBooking} onClose={() => setEditingBooking(null)} onUpdated={(updated) => { setBookings((current) => current.map((item) => item.id === updated.id ? updated : item)); setEditingBooking(null); }} onCancelled={(id) => { setBookings((current) => current.filter((item) => item.id !== id)); setEditingBooking(null); }} />}
+      {editingStudent && <StudentProfileModal student={editingStudent} suggestions={[...new Set(students.flatMap((item) => item.tags))]} onClose={() => setEditingStudent(null)} onSaved={(updated) => { setStudents((current) => current.map((item) => item.name === updated.name ? updated : item)); setEditingStudent(null); }} />}
     </main>
   );
 }
@@ -220,14 +223,14 @@ function Badge({ value }: { value: string }) {
   return <span className={`badge ${className}`}>{value}</span>;
 }
 
-function StudentView({ students, onBack, onAdd }: { students: Student[]; onBack: () => void; onAdd: () => void }) {
+function StudentView({ students, onEdit, onAdd }: { students: Student[]; onEdit: (student: Student) => void; onAdd: () => void }) {
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState("全部");
   const visible = students.filter((student) => student.name.includes(query) && (stage === "全部" || student.type === stage));
   return <section className="panel full-panel">
     <div className="panel-heading student-heading"><div><span className="leaf">❧</span><div><h2>學員資料</h2><p>學員目前階段與每堂課類型分開保存</p></div></div><div className="student-actions"><input aria-label="搜尋學員" placeholder="搜尋學員姓名" value={query} onChange={(e) => setQuery(e.target.value)} /><button className="primary-button" onClick={onAdd}>＋ 新增學員</button></div></div>
     <div className="filters student-stage-tabs">{["全部", "體驗課", "正課"].map((item) => <button key={item} className={stage === item ? "selected" : ""} onClick={() => setStage(item)}>{item === "體驗課" ? "體驗課學生" : item === "正課" ? "正課學生" : `全部 ${students.length}`}</button>)}</div>
-    <div className="student-grid">{visible.map((student) => <article className="student-card" key={student.name}><div className="avatar">{student.name.slice(0, 1)}</div><div className="student-card-top"><Badge value={student.type} /><span>最近：{student.last}</span></div><h3>{student.name}</h3><p>{student.goal}</p><div className="student-progress"><span>剩餘堂數</span><strong>{student.sessions || "—"}</strong></div><button onClick={onBack}>查看完整紀錄 <span>›</span></button></article>)}</div>
+    <div className="student-grid">{visible.map((student) => <article className="student-card" key={student.name}><div className="avatar">{student.name.slice(0, 1)}</div><div className="student-card-top"><Badge value={student.type} /><span>最近：{student.last}</span></div><h3>{student.name}</h3><p>{student.note || student.goal}</p>{student.tags.length > 0 && <div className="student-tags">{student.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="student-progress"><span>剩餘堂數</span><strong>{student.sessions || "—"}</strong></div><button onClick={() => onEdit(student)}>編輯備註與標籤 <span>›</span></button></article>)}</div>
   </section>;
 }
 
@@ -259,7 +262,7 @@ function BookingView({ bookings, holidays, holidayConnected, onOpen, onClassify,
       const dateKey = keyOf(day); const items = visible.filter((booking) => booking.date === dateKey); const isHoliday = holidays.includes(dateKey);
       return <section className={`day-column ${isHoliday ? "holiday-day" : ""}`} key={dateKey} onClick={() => { if (!isHoliday) onDateClick(dateKey); }} title={isHoliday ? "放假日不可新增預約" : "點擊空白處快速預約"}>
         <header><span>{new Intl.DateTimeFormat("zh-TW", { weekday: "short" }).format(day)}</span><b>{day.getDate()}</b></header>
-        <div>{isHoliday && <article className="holiday-card"><span>❧</span><strong>今日放假</strong><small>不開放新增預約</small></article>}{items.map((booking) => <article className={`calendar-event ${booking.type === "待分類" ? "unclassified" : ""}`} key={booking.id} onClick={(event) => { event.stopPropagation(); onOpen(booking); }}><time>{booking.time}</time><strong>{booking.student}</strong><small>{booking.coach} · {booking.location}</small>{booking.type === "待分類" ? <div className="quick-classify"><button disabled={saving === booking.student} onClick={(event) => { event.stopPropagation(); choose(booking, "體驗課"); }}>體驗課</button><button disabled={saving === booking.student} onClick={(event) => { event.stopPropagation(); choose(booking, "正課"); }}>正課</button></div> : <Badge value={booking.type} />}<span className="event-open">點卡片管理 ›</span></article>)}{!isHoliday && <button className="no-booking" onClick={(event) => { event.stopPropagation(); onDateClick(dateKey); }}>＋ 新增預約</button>}</div>
+        <div>{isHoliday && <article className="holiday-card"><span>❧</span><strong>今日放假</strong><small>不開放新增預約</small></article>}{items.map((booking) => <article className={`calendar-event ${booking.type === "正課" ? "regular-event" : booking.type === "體驗課" ? "trial-event" : "unclassified"}`} key={booking.id} onClick={(event) => { event.stopPropagation(); onOpen(booking); }}><time>{booking.time}</time><strong>{booking.student}</strong><small>{booking.coach} · {booking.location}</small>{booking.type === "待分類" ? <div className="quick-classify"><button disabled={saving === booking.student} onClick={(event) => { event.stopPropagation(); choose(booking, "體驗課"); }}>體驗課</button><button disabled={saving === booking.student} onClick={(event) => { event.stopPropagation(); choose(booking, "正課"); }}>正課</button></div> : <Badge value={booking.type} />}<span className="event-open">點卡片管理 ›</span></article>)}{!isHoliday && <button className="no-booking" onClick={(event) => { event.stopPropagation(); onDateClick(dateKey); }}>＋ 新增預約</button>}</div>
       </section>;
     })}</div></> : <div className="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>學員</th><th>類型</th><th>教練／地點</th><th>操作</th></tr></thead><tbody>{visible.map((booking) => <tr key={booking.id} onClick={() => onOpen(booking)}><td>{booking.date}</td><td className="time-cell">{booking.time}</td><td>{booking.student}</td><td><Badge value={booking.type} /></td><td>{booking.coach}<small>{booking.location}</small></td><td><button className="outline-button" onClick={(event) => { event.stopPropagation(); onOpen(booking); }}>管理預約</button></td></tr>)}{visible.length === 0 && <tr><td colSpan={6}>目前沒有符合的預約。</td></tr>}</tbody></table></div>}
   </section>;
@@ -298,6 +301,15 @@ function NewStudentModal({ onClose, onCreate }: { onClose: () => void; onCreate:
   const [submitting, setSubmitting] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); setSubmitting(true); try { await onCreate(String(form.get("name") || "").trim(), String(form.get("type")) as CourseType); } catch (error) { window.alert(error instanceof Error ? error.message : "新增失敗"); setSubmitting(false); } }
   return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="record-modal quick-book-modal"><header><div><span className="modal-kicker">NEW STUDENT</span><h2>新增學員</h2><p>轉過來的舊生可以直接建立為正課學生</p></div><button onClick={onClose}>×</button></header><form onSubmit={submit}><label>學員姓名<input name="name" required autoFocus /></label><label>目前階段<select name="type" defaultValue="體驗課"><option>體驗課</option><option>正課</option></select></label><footer><button type="button" className="ghost-button" onClick={onClose}>取消</button><button className="primary-button" disabled={submitting}>{submitting ? "建立中…" : "建立學員"}</button></footer></form></div></div>;
+}
+
+function StudentProfileModal({ student, suggestions, onClose, onSaved }: { student: Student; suggestions: string[]; onClose: () => void; onSaved: (student: Student) => void }) {
+  const [tags, setTags] = useState(student.tags);
+  const [tagInput, setTagInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  function addTag(value: string) { const tag = value.trim(); if (tag && !tags.includes(tag)) setTags((current) => [...current, tag]); setTagInput(""); }
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const note = String(form.get("note") || ""); setSubmitting(true); try { const response = await fetch("/api/students/profile", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ student: student.name, note, tags }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "儲存失敗"); onSaved({ ...student, note, tags }); } catch (error) { window.alert(error instanceof Error ? error.message : "儲存失敗"); setSubmitting(false); } }
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="record-modal"><header><div><span className="modal-kicker">STUDENT PROFILE</span><h2>{student.name}</h2><p>備註與標籤會保存到 Google Sheet</p></div><button onClick={onClose}>×</button></header><form onSubmit={submit}><label>備註<textarea name="note" defaultValue={student.note} placeholder="例如：轉學生、曾在其他教室上課、需要注意的情況…" /></label><label>多標籤<div className="tag-editor"><div className="tag-list">{tags.map((tag) => <button type="button" key={tag} onClick={() => setTags((current) => current.filter((item) => item !== tag))}>{tag}<span>×</span></button>)}</div><input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addTag(tagInput); } }} placeholder="輸入標籤後按 Enter" /></div></label>{suggestions.filter((tag) => !tags.includes(tag)).length > 0 && <div className="tag-suggestions"><small>曾用過的標籤</small>{suggestions.filter((tag) => !tags.includes(tag)).map((tag) => <button type="button" key={tag} onClick={() => addTag(tag)}>＋ {tag}</button>)}</div>}<footer><button type="button" className="ghost-button" onClick={onClose}>取消</button><button className="primary-button" disabled={submitting}>{submitting ? "儲存中…" : "儲存備註與標籤"}</button></footer></form></div></div>;
 }
 
 function BookingManageModal({ booking, onClose, onUpdated, onCancelled }: { booking: Booking; onClose: () => void; onUpdated: (booking: Booking) => void; onCancelled: (id: string) => void }) {
