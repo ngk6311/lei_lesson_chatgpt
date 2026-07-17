@@ -33,7 +33,7 @@ async function accessToken(env: GoogleEnv) {
   const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claim = base64Url(JSON.stringify({
     iss: credentials.client_email,
-    scope: "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.readonly",
+    scope: "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar",
     aud: credentials.token_uri || "https://oauth2.googleapis.com/token",
     iat: now,
     exp: now + 3600,
@@ -115,7 +115,8 @@ export async function getBootstrap(env: GoogleEnv) {
       end: finish,
       date: taipeiDay(new Date(start)),
       time: `${taipeiTime(new Date(start))}–${taipeiTime(new Date(finish))}`,
-      type: profile?.["學員階段"] === "正課" ? "正課" : profile?.["學員階段"] === "體驗課" ? "體驗課" : "待分類",
+      // Booking 信件進來的學員預設視為體驗課；教練之後仍可改成正課。
+      type: profile?.["學員階段"] === "正課" ? "正課" : "體驗課",
       status: new Date(finish).getTime() < Date.now() ? "已完成" : "已預約",
       record: recordBookingIds.has(event.id),
     };
@@ -162,4 +163,32 @@ export async function classifyStudent(env: GoogleEnv, body: Record<string, unkno
     ]] }) });
   }
   return { ok: true, student, type };
+}
+
+export async function createBooking(env: GoogleEnv, body: Record<string, unknown>) {
+  const student = String(body.student || "").trim();
+  const coach = String(body.coach || "ANITA").trim();
+  const location = String(body.location || "Le Gin 松南店").trim();
+  const start = String(body.start || "");
+  const end = String(body.end || "");
+  if (!student || !start || !end || new Date(end) <= new Date(start)) throw new Error("預約時間資料不正確");
+  const token = await accessToken(env);
+  const calendarBase = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.GOOGLE_CALENDAR_ID)}/events`;
+  const conflictUrl = new URL(calendarBase);
+  conflictUrl.searchParams.set("singleEvents", "true");
+  conflictUrl.searchParams.set("timeMin", new Date(start).toISOString());
+  conflictUrl.searchParams.set("timeMax", new Date(end).toISOString());
+  const conflictResponse = await fetch(conflictUrl, { headers: { authorization: `Bearer ${token}` } });
+  const conflictData = await conflictResponse.json() as { items?: CalendarEvent[]; error?: { message?: string } };
+  if (!conflictResponse.ok) throw new Error(conflictData.error?.message || "無法檢查行事曆時段");
+  const conflicts = (conflictData.items || []).filter((event) => event.status !== "cancelled");
+  if (conflicts.length) throw new Error("這個時段已經有其他課程，請選擇不同時間");
+  const response = await googleFetch(env, calendarBase, { method: "POST", body: JSON.stringify({
+    summary: `${student}｜${coach} 皮拉提斯`, location,
+    description: "由 Le Gin 學員管理系統快速預約",
+    start: { dateTime: start, timeZone: "Asia/Taipei" },
+    end: { dateTime: end, timeZone: "Asia/Taipei" },
+  }) });
+  const event = await response.json() as CalendarEvent;
+  return { ok: true, id: event.id, student, coach, location, start, end };
 }
