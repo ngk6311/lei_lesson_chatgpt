@@ -233,6 +233,7 @@ async function updateReservationFields(env: GoogleEnv, eventId: string, fields: 
 
 export async function rescheduleBooking(env: GoogleEnv, eventId: string, body: Record<string, unknown>) {
   const start = String(body.start || ""); const end = String(body.end || "");
+  const courseType = String(body.type || "體驗課") === "正課" ? "正課" : "體驗課";
   if (!eventId || !start || !end || new Date(end) <= new Date(start)) throw new Error("新的預約時間不正確");
   const token = await accessToken(env);
   const calendarBase = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.GOOGLE_CALENDAR_ID)}/events`;
@@ -241,8 +242,8 @@ export async function rescheduleBooking(env: GoogleEnv, eventId: string, body: R
   const conflicts = ((await check.json() as { items?: CalendarEvent[] }).items || []).filter((event) => event.status !== "cancelled" && event.id !== eventId);
   if (conflicts.length) throw new Error("這個時段已有其他課程，請選擇不同時間");
   await googleFetch(env, `${calendarBase}/${encodeURIComponent(eventId)}`, { method: "PATCH", body: JSON.stringify({ start: { dateTime: start, timeZone: "Asia/Taipei" }, end: { dateTime: end, timeZone: "Asia/Taipei" } }) });
-  await updateReservationFields(env, eventId, [{ column: "H", value: start }, { column: "I", value: end }]);
-  return { ok: true, id: eventId, start, end };
+  await updateReservationFields(env, eventId, [{ column: "H", value: start }, { column: "I", value: end }, { column: "J", value: courseType }]);
+  return { ok: true, id: eventId, start, end, type: courseType };
 }
 
 export async function cancelBooking(env: GoogleEnv, eventId: string) {
