@@ -76,7 +76,7 @@ function taipeiTime(date: Date) {
 
 export async function getBootstrap(env: GoogleEnv) {
   const token = await accessToken(env);
-  const sheetRanges = ["學員資料!A1:L", "上課紀錄!A1:M", "課程方案!A1:I"];
+  const sheetRanges = ["學員資料!A1:L", "預約紀錄!A1:M", "上課紀錄!A1:M", "課程方案!A1:I"];
   const sheetsUrl = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values:batchGet`);
   sheetRanges.forEach((range) => sheetsUrl.searchParams.append("ranges", range));
   // Le Gin 從 2026 年 7 月開始使用本系統，因此完整保留 7 月起的歷史課程。
@@ -97,13 +97,16 @@ export async function getBootstrap(env: GoogleEnv) {
   const sheetData = await sheetResponse.json() as { valueRanges?: Array<{ values?: string[][] }> };
   const calendarData = await calendarResponse.json() as { items?: CalendarEvent[] };
   const students = rowsToObjects(sheetData.valueRanges?.[0]?.values);
-  const records = rowsToObjects(sheetData.valueRanges?.[1]?.values);
-  const packages = rowsToObjects(sheetData.valueRanges?.[2]?.values);
+  const reservations = rowsToObjects(sheetData.valueRanges?.[1]?.values);
+  const records = rowsToObjects(sheetData.valueRanges?.[2]?.values);
+  const packages = rowsToObjects(sheetData.valueRanges?.[3]?.values);
   const recordBookingIds = new Set(records.map((record) => record["預約ID"]));
+  const reservationByEventId = new Map(reservations.map((item) => [item["行事曆活動ID"], item]));
   const bookings = (calendarData.items || []).filter((event) => event.status !== "cancelled").map((event) => {
     const title = String(event.summary || "未命名學員");
     const student = title.split("｜")[0].trim();
     const profile = students.find((item) => item["姓名"] === student);
+    const reservation = reservationByEventId.get(event.id || "");
     const start = event.start?.dateTime || event.start?.date;
     const finish = event.end?.dateTime || event.end?.date;
     return {
@@ -116,12 +119,12 @@ export async function getBootstrap(env: GoogleEnv) {
       date: taipeiDay(new Date(start)),
       time: `${taipeiTime(new Date(start))}–${taipeiTime(new Date(finish))}`,
       // Booking 信件進來的學員預設視為體驗課；教練之後仍可改成正課。
-      type: profile?.["學員階段"] === "正課" ? "正課" : "體驗課",
+      type: reservation?.["課程類型"] === "正課" ? "正課" : reservation?.["課程類型"] === "體驗課" ? "體驗課" : profile?.["學員階段"] === "正課" ? "正課" : "體驗課",
       status: new Date(finish).getTime() < Date.now() ? "已完成" : "已預約",
       record: recordBookingIds.has(event.id),
     };
   });
-  return { bookings, students, records, packages, today: taipeiDay() };
+  return { bookings, students, reservations, records, packages, today: taipeiDay() };
 }
 
 export async function appendRecord(env: GoogleEnv, body: Record<string, unknown>) {
@@ -169,6 +172,7 @@ export async function createBooking(env: GoogleEnv, body: Record<string, unknown
   const student = String(body.student || "").trim();
   const coach = String(body.coach || "ANITA").trim();
   const location = String(body.location || "Le Gin 松南店").trim();
+  const courseType = String(body.type || "體驗課") === "正課" ? "正課" : "體驗課";
   const start = String(body.start || "");
   const end = String(body.end || "");
   if (!student || !start || !end || new Date(end) <= new Date(start)) throw new Error("預約時間資料不正確");
@@ -190,5 +194,11 @@ export async function createBooking(env: GoogleEnv, body: Record<string, unknown
     end: { dateTime: end, timeZone: "Asia/Taipei" },
   }) });
   const event = await response.json() as CalendarEvent;
-  return { ok: true, id: event.id, student, coach, location, start, end };
+  const reservationUrl = `https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values/${encodeURIComponent("預約紀錄!A:M")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+  const now = new Date().toISOString();
+  await googleFetch(env, reservationUrl, { method: "POST", body: JSON.stringify({ values: [[
+    crypto.randomUUID(), event.id || "", "", "", student, coach, location, start, end,
+    courseType, "已預約", "尚未填寫", now,
+  ]] }) });
+  return { ok: true, id: event.id, student, coach, location, start, end, type: courseType };
 }
