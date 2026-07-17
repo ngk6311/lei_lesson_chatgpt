@@ -79,8 +79,9 @@ export async function getBootstrap(env: GoogleEnv) {
   const sheetRanges = ["學員資料!A1:L", "上課紀錄!A1:M", "課程方案!A1:I"];
   const sheetsUrl = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}/values:batchGet`);
   sheetRanges.forEach((range) => sheetsUrl.searchParams.append("ranges", range));
-  const start = new Date(); start.setDate(start.getDate() - 7);
-  const end = new Date(); end.setDate(end.getDate() + 60);
+  // Le Gin 從 2026 年 7 月開始使用本系統，因此完整保留 7 月起的歷史課程。
+  const start = new Date("2026-07-01T00:00:00+08:00");
+  const end = new Date(); end.setMonth(end.getMonth() + 6);
   const calendarUrl = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.GOOGLE_CALENDAR_ID)}/events`);
   calendarUrl.searchParams.set("singleEvents", "true");
   calendarUrl.searchParams.set("orderBy", "startTime");
